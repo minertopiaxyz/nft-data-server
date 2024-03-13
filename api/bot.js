@@ -11,7 +11,6 @@ module.exports = async (req, res) => {
 
 async function run(params) {
   let ret = {};
-  let client;
   const startTS = moment().valueOf();
   try {
     const CHAIN_ID = 1030;
