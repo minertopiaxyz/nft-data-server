@@ -1,28 +1,19 @@
-const moment = require('moment');
 const ethers = require("ethers").ethers;
-
-const config = require('./config.json');
+const config = require('./json/config.json');
 const SC_ABI = require('./json/PoolV3.sol/PoolV3.json').abi;
 const SC_ADDRESS = config.pool;
 const PP_ABI = require('./json/PosPoolABI.json');
 const PP_ADDRESS = config.pospool;
-const BigNumber = ethers.BigNumber;
 
 module.exports = class Pool {
   constructor(dapp) {
-    console.log('Pool created..');
     this.dapp = dapp;
   }
 
   async init() {
-    console.log('Pool init..');
     const signer = this.dapp.getSigner();
     this.sc = new ethers.Contract(SC_ADDRESS, SC_ABI, signer);
     this.address = this.sc.address;
-
-    const version = await this.sc.VERSION();
-    console.log('Pool VERSION: ' + version);
-
     this.posPool = new ethers.Contract(PP_ADDRESS, PP_ABI, signer);
   }
 
@@ -32,15 +23,14 @@ module.exports = class Pool {
   }
 
   async getPosPoolSummary() {
-    // not applicable on testnet
     const summary = await this.posPool.userSummary(this.address);
-    console.log(summary);
     return summary;
   }
 
   async getData() {
     const poolAddress = this.address;
     const dapp = this.dapp;
+    const isFork = dapp.IS_FORK;
     const poolETH = await dapp.PROVIDER.getBalance(poolAddress);
     const poolUSDT = await dapp.USDT.balanceOf(poolAddress);
     const poolToken = await dapp.TOKEN.balanceOf(poolAddress);
@@ -49,21 +39,34 @@ module.exports = class Pool {
     const poolStakedETH = this.dapp.eth2wei((ppSummary.votes.toNumber() * 1000) + '');
     const posInterest = ppSummary.currentInterest;
 
-    console.log({
-      poolETH: poolETH.toString(),
-      poolUSDT: poolUSDT.toString(),
-      poolToken: poolToken.toString()
-    });
+    const block = await dapp.PROVIDER.getBlock();
+    const curTime = block.timestamp;
 
-    const spni = await this.simulatePumpPrice(true);
-    const ppInterest = dapp.wei2eth(spni[0]);
-    const ppNumToken = dapp.wei2eth(spni[1]);
-    console.log('** spni **');
-    console.log({ ppInterest, ppNumToken });
+    const spni = await this.sc.callStatic.pumpPrice();
+    const ppInterest = spni[0];
+    const ppNumToken = spni[1];
+    let haveResult = ppInterest.gt('0') && ppNumToken.gt('0');
+    if (isFork) haveResult = true;
 
-    return {
-      poolETH, poolUSDT, poolToken, poolStakedETH, posInterest
+    const lastPumpPriceTime = (await this.sc.lastPumpPriceTime()).toNumber();
+    let nextPumpPriceTime = lastPumpPriceTime + (3600 * 3);
+    // if (isFork) nextPumpPriceTime = lastPumpPriceTime + (1 * 60);
+
+    const lastUpdateTime = (await this.sc.lastUpdateTime()).toNumber();
+    let nextUpdateTime = lastUpdateTime + (3600 * 24);
+    // if (isFork) nextUpdateTime = lastUpdateTime + (5 * 60);
+
+    const mayPump = haveResult && curTime > nextPumpPriceTime;
+    const mayUpdate = curTime > nextUpdateTime;
+
+    const ret = {
+      poolETH, poolUSDT, poolToken, poolStakedETH, posInterest,
+      curTime,
+      lastPumpPriceTime, nextPumpPriceTime, mayPump,
+      lastUpdateTime, nextUpdateTime, mayUpdate
     }
+
+    return ret;
   }
 
   async debug1(amount) {
@@ -95,23 +98,16 @@ module.exports = class Pool {
     return tx;
   }
 
-  async simulatePumpPrice(withoutInterest) {
-    if (withoutInterest) {
-      const val = this.dapp.eth2wei('1');
-      return await this.sc.callStatic.pumpPrice({ value: val });
-    }
-
-    return await this.sc.callStatic.pumpPrice();
+  async pumpPriceByOne() {
+    let tx;
+    const val = this.dapp.eth2wei('1');
+    tx = await this.sc.pumpPrice({ value: val });
+    return tx;
   }
 
-  async pumpPrice(withoutInterest) {
+  async pumpPrice() {
+    if (this.dapp.IS_FORK) return await this.pumpPriceByOne();
     let tx;
-    if (withoutInterest) {
-      const val = this.dapp.eth2wei('1');
-      tx = await this.sc.pumpPrice({ value: val });
-      return tx;
-    }
-
     tx = await this.sc.pumpPrice();
     return tx;
   }
@@ -122,7 +118,6 @@ module.exports = class Pool {
   }
 
   async cleanUp() {
-    console.log('Pool cleanup..');
   }
 
 }

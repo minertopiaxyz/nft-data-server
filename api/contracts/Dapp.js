@@ -9,8 +9,18 @@ const Token = require('./Token');
 const Pool = require('./Pool');
 const Vault = require('./Vault');
 
-const BigNumber = ethers.BigNumber;
-const config = require('./config.json');
+const config = require('./json/config.json');
+
+// dont include outside file. ex: Lib
+
+const delay = async (ms) => {
+  console.log('wait for ' + (ms / 1000) + ' secs...');
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve();
+    }, ms);
+  });
+}
 
 module.exports = class Dapp {
   constructor(chainId) {
@@ -41,8 +51,6 @@ module.exports = class Dapp {
     await this.TOKEN.init(config.token);
     this.POOL = new Pool(this);
     await this.POOL.init();
-
-    await this.getUserData();
   }
 
   async cleanUp() {
@@ -50,7 +58,6 @@ module.exports = class Dapp {
     // for (let i = 0; i < cs.length; i++) {
     //   if (cs[i]) await cs[i].cleanUp();
     // }
-    // console.log('Blockchain cleanup...');
   }
 
   async detectMetamask() {
@@ -78,15 +85,27 @@ module.exports = class Dapp {
       this.RANDOM_WALLET = true;
     }
     this.PROVIDER = new ethers.providers.JsonRpcProvider(providerUrl);
+    this.IS_FORK = (providerUrl === 'http://127.0.0.1:8545');
     this.SIGNER = new ethers.Wallet(pk, this.PROVIDER);
     this.USER_ADDRESS = await this.SIGNER.getAddress();
     return this.USER_ADDRESS;
   }
 
   async getLandingPageData() {
+    const wei2eth = this.wei2eth;
+    // const eth2wei = this.eth2wei;
+    let apy = await this.VAULT.getAPY();
+    if (Number(apy) > 1000 || Number(apy) === 0) apy = '>1000';
+    const price = await this.GUARD.getSwapPrice();
+    const ii = '1000000000'
+    let p = price.div(ii);
+    p = p.mul(ii);
+    // p = Math.floor(Number(wei2eth(p))) / 1000000000;
+    // p = eth2wei(p);
+    p = wei2eth(p);
     return {
-      price: '0.0001',
-      apy: '33',
+      price: p,
+      apy: apy,
     }
   }
 
@@ -116,6 +135,10 @@ module.exports = class Dapp {
     return ethers.utils.parseEther(eth);
   }
 
+  async getBlockTS() {
+    return (await this.PROVIDER.getBlock('latest')).timestamp;
+  }
+
   async getUserData() {
     const userAddress = this.USER_ADDRESS;
     const userETH = await this.PROVIDER.getBalance(userAddress);
@@ -125,12 +148,6 @@ module.exports = class Dapp {
 
     const lastUpdateTime = await this.POOL.lastUpdateTime();
     const nextUpdateTime = lastUpdateTime + 86400;
-
-    console.log({
-      userETH: userETH.toString(),
-      userUSDT: userUSDT.toString(),
-      userToken: userToken.toString(),
-    });
 
     return {
       userETH, userUSDT, userToken, lastUpdateTime, nextUpdateTime
@@ -143,7 +160,6 @@ module.exports = class Dapp {
     const allowance = await token.allowance(userAddress, spenderAddress);
     const owned = await token.balanceOf(userAddress);
     const ok = allowance.gte(owned) && allowance.gt('0');
-    console.log('allowance: ' + allowance.toString());
     return !ok;
   }
 
@@ -152,152 +168,108 @@ module.exports = class Dapp {
     return tx;
   }
 
-  async test() {
+  async initByBot(msDelay) {
+    if (!msDelay) msDelay = 100;
+    let tx;
+    console.log('** GUARD APPROVE **');
+    await this.GUARD.approve();
+    await delay(msDelay);
+    console.log('** INIT POOL STAKE **');
+    tx = await this.POOL.stake('1000');
+    console.log(tx.hash);
+    await tx.wait();
+    console.log('done');
+    await delay(msDelay);
+    console.log('** NFT 1 MINT **');
+    tx = await this.NFT.mint();
+    console.log(tx.hash);
+    await tx.wait();
+    console.log('done');
+    await delay(msDelay);
+    console.log('** NFT 1 POWER UP **');
+    tx = await this.NFT.powerUp('1', '1');
+    console.log(tx.hash);
+    await tx.wait();
+    console.log('done');
+    await delay(msDelay);
+    console.log('** VAULT APPROVE **');
+    await this.approve(this.TOKEN.sc, this.VAULT.address);
+    console.log(tx.hash);
+    await tx.wait();
+    console.log('done');
+    await delay(msDelay);
+    console.log('** VAULT STAKE **');
+    tx = await this.VAULT.stakeToken('1');
+    console.log(tx.hash);
+    await tx.wait();
+    console.log('done');
+  }
+
+  async updateByBot() {
+    const ret = {};
+    console.log("\n\n");
+    console.log('*****************************************');
+    console.log(moment().format());
+    console.log('*****************************************');
+    if (this.IS_FORK) console.log('use fork chain');
+
+    ret.tsjkt = (moment().utc().utcOffset("+07:00")).format();
+
     await this.GUARD.approve();
     const guardData = await this.GUARD.getData();
-    if (guardData.action) {
-      console.log({ guardData });
+    const mayGuard = guardData.mayGuard;
+    console.log(guardData);
+
+    if (mayGuard) {
+      console.log('GUARD.run');
       const tx = await this.GUARD.run(guardData.sample, guardData.profitPump, guardData.profitDump);
       console.log(tx.hash);
       await tx.wait();
+
+      const poolData = await this.POOL.getData();
+
+      ret.txName = 'GUARD.run';
+      ret.txHash = tx.hash;
+      ret.guardData = guardData;
+      ret.poolData = poolData;
+    } else {
+      const poolData = await this.POOL.getData();
+      const mayPump = poolData.mayPump;
+      const mayUpdate = poolData.mayUpdate;
+      console.log(poolData);
+
+      if (mayUpdate) {
+        console.log('POOL.update');
+        const tx = await this.POOL.update();
+        console.log(tx.hash);
+        await tx.wait();
+        ret.txName = 'POOL.update';
+        ret.txHash = tx.hash;
+      } else if (mayPump) {
+        console.log('POOL.pumpPrice');
+        const tx = await this.POOL.pumpPrice();
+        console.log(tx.hash);
+        await tx.wait();
+        ret.txName = 'POOL.pumpPrice';
+        ret.txHash = tx.hash;
+      }
+
+      ret.guardData = guardData;
+      ret.poolData = poolData;
     }
+
+    if (this.IS_FORK) {
+      const tx = await this.SIGNER.sendTransaction({
+        to: config.deployer,
+        value: 0
+      });
+      await tx.wait();
+      console.log('empty tx: ' + tx.hash);
+    }
+
+    console.log('*****************************************');
+    console.log("\n\n");
+    return ret;
   }
 
-  async test_old() {
-    let tx;
-    const ud = await this.getUserData();
-
-    const userAddress = this.USER_ADDRESS;
-    const userNft = await this.NFT.getUserNft();
-    console.log(JSON.stringify(userNft, null, 2));
-
-    const nftIds = userNft.nftIds;
-    const nftId = nftIds.length > 0 ? userNft.nftIds[0] : null;
-
-    // tx = await this.NFT.mint(); // mint nft
-    // tx = await this.NFT.powerUp(nftId, '50'); // powerup nft
-    // tx = await this.NFT.setURL('https://nft-info.com/nfts/nftdata', '.json'); // set URL - not checked
-
-    // console.log(tx.hash);
-    // await tx.wait();
-    // console.log('done');
-
-    // const check = await this.NFT.tokenURI(1);
-    // console.log(check);
-    // return;
-
-    // get nft reward amount
-    const ur = await this.NFT_REWARD.getUnclaimedReward(nftId);
-    console.log('NR.unclaimedReward:');
-    console.log(ur);
-
-    // est. next reward time
-    const estNRT = await this.POOL.nextUpdateTime();
-    console.log('estNRT: ' + estNRT);
-
-    // pool cfx, usdt, token
-    const poolData = await this.POOL.getData();
-    console.log(poolData);
-
-    // pool staked cfx
-    await this.POOL.getPosPoolSummary(); // fork
-
-    // pool stake
-    // tx = await this.POOL.stake('1000');
-
-    // pool pump price // not checked in testnet
-
-    // console.log(tx.hash);
-    // await tx.wait();
-    // console.log('done');
-
-    // approve bank
-    let na = await this.needApprove(this.USDT, this.BANK.address);
-    if (na) {
-      tx = await this.approve(this.USDT, this.BANK.address);
-      console.log(tx.hash);
-      await tx.wait();
-      console.log('done');
-    } else console.log('allowance ok');
-
-    na = await this.needApprove(this.TOKEN, this.BANK.address);
-    if (na) {
-      tx = await this.approve(this.TOKEN, this.BANK.address);
-      console.log(tx.hash);
-      await tx.wait();
-      console.log('done');
-    } else console.log('allowance ok');
-
-    na = await this.needApprove(this.TOKEN, this.VAULT.address);
-    if (na) {
-      tx = await this.approve(this.TOKEN, this.VAULT.address);
-      console.log(tx.hash);
-      await tx.wait();
-      console.log('done');
-    } else console.log('allowance ok');
-
-    // bank swapCoinToToken
-    // vault stake
-    // vault user data
-    // pool debug1
-    // pool update
-
-    // tx = await this.BANK.swapCoinToToken('1', userAddress); // get 1$ worth token
-    // const userToken = this.wei2eth(ud.userToken);
-    // tx = await this.VAULT.stakeToken(userToken); // vault stake
-
-    // tx = await this.POOL.debug1('10'); // pool debug1, should use pump price test
-    // tx = await this.POOL.update(); // pool update
-
-    // console.log(tx.hash);
-    // await tx.wait();
-    // console.log('done');
-
-    // vault reward check
-    const ur1 = await this.NFT_REWARD.getUnclaimedReward(nftId);
-    console.log('unclaimedReward:');
-    console.log(ur);
-
-    const ur2 = await this.VAULT.getUnclaimedReward(userAddress);
-    console.log(ur2.toString());
-
-    // nftReward claim reward
-    // tx = await this.NFT_REWARD.claimReward(nftId);
-    // vault claim reward((
-    // tx = await this.VAULT.claimReward(userAddress);
-
-    // console.log(tx.hash);
-    // await tx.wait();
-    // console.log('done');
-
-    const vud = await this.VAULT.getUserData();
-    console.log(vud);
-    const staked = this.wei2eth(vud.stake);
-    console.log(staked);
-
-    // vault unstake - fork
-    // vault withdraw - fork
-    // tx = await this.VAULT.unstakeToken(staked);
-    // tx = await this.VAULT.withdrawToken();
-
-    // pool debug2 - fork
-    // tx = await this.POOL.debug2('1000'); // check poolETH
-    // pool debug3 - fork
-    // tx = await this.POOL.debug3('1000'); // check poolETH
-
-    // const v1 = this.wei2eth('150000000000000000000');
-    // const v2 = this.wei2eth('1150000000000000000000');
-    // console.log({ v1, v2 });
-
-    // console.log(tx.hash);
-    // await tx.wait();
-    // console.log('done');
-
-    // check pumpPrice
-    // guard mechanism
-    // guard buySwapSellBank - not checked in testnet
-    // guard buyBankSellSwap - not checked in testnet
-
-
-  }
 }

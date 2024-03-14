@@ -2,6 +2,7 @@ const moment = require('moment');
 const Dapp = require('./contracts/Dapp');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const MONGODB_CONNECTION_STR = process.env.MONGODB_CONNECTION_STR;
+const PK = process.env.PPDAOSECRET;
 
 module.exports = async (req, res) => {
   const params = req.query;
@@ -16,20 +17,24 @@ async function run(params) {
     const CHAIN_ID = 1030;
     const PROVIDER_URL = 'https://evm.confluxrpc.com';
     const dapp = new Dapp(CHAIN_ID);
-    const userAddress = await dapp.loadPrivateKey(null, PROVIDER_URL);
-
-    ret = {
+    const userAddress = await dapp.loadPrivateKey(PK, PROVIDER_URL);
+    await dapp.initContracts();
+    console.log('dapp ready..');
+    const result = await dapp.updateByBot();
+    ret = Object.assign({
       chainId: CHAIN_ID,
       providerUrl: PROVIDER_URL,
       userAddress,
-      curTime: moment().format()
-    }
+      curTime: (moment().utc().utcOffset("+07:00")).format()
+    }, result);
 
-    ret.dbResult = await saveToDB('bot_result', ret);
+    // ret.dbResult = await saveToDB('bot_result', ret);
 
   } catch (err) {
+    console.error(err);
     ret = {
-      error: true
+      error: true,
+      errMsg: JSON.stringify(err)
     }
   }
   const endTS = moment().valueOf();

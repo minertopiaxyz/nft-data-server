@@ -1,26 +1,18 @@
-const moment = require('moment');
 const ethers = require("ethers").ethers;
 
-const config = require('./config.json');
+const config = require('./json/config.json');
 const SC_ABI = require('./json/NFTV3.sol/NFTV3.json').abi;
 const SC_ADDRESS = config.nft;
-const BigNumber = ethers.BigNumber;
 
 module.exports = class NFT {
   constructor(dapp) {
-    console.log('NFT created..');
     this.dapp = dapp;
   }
 
   async init() {
-    console.log('NFT init..');
     const signer = this.dapp.getSigner();
     this.sc = new ethers.Contract(SC_ADDRESS, SC_ABI, signer);
     this.address = this.sc.address;
-    const version = await this.sc.VERSION();
-    console.log('NFT VERSION: ' + version);
-    const totalSupply = await this.sc.totalSupply();
-    console.log('totalSupply: ' + totalSupply.toString());
     const owner = await this.sc.owner();
     this.ownerAddress = owner.toLowerCase();
   }
@@ -40,18 +32,32 @@ module.exports = class NFT {
   }
 
   async getUserNft() {
+    const wei2eth = this.dapp.wei2eth;
+
     const ret = {};
+    const totalSupply = await this.sc.totalSupply();
+    ret.totalSupply = totalSupply.toNumber();
     const nftIds = await this.getUserNftIds();
     ret.nftIds = nftIds;
     ret.nftId2data = {};
+    const nrd = await this.dapp.NFT_REWARD.sc.getData();
+    const totalEP = nrd[4];
+    const b = Number(wei2eth(totalEP));
     for (let i = 0; i < nftIds.length; i++) {
       const nftId = nftIds[i];
       const data = await this.getNftData(nftId);
+
+      const ep = data.nftData.extraPower;
+      const a = Number(wei2eth(ep));
+      const percentage = (a * 100) / b;
+
+      data.percentage = percentage;
       ret.nftId2data[nftId] = data;
     }
 
-    console.log('** user nft **');
-    console.log(ret);
+    const lastUpdateTime = await this.dapp.POOL.lastUpdateTime();
+    const nextUpdateTime = lastUpdateTime + (24 * 3600);
+    ret.nextUpdateTime = nextUpdateTime;
 
     return ret;
   }
@@ -83,8 +89,11 @@ module.exports = class NFT {
   }
 
   async mint() {
-    const amountWei = this.dapp.eth2wei('100');
+    let amountWei = this.dapp.eth2wei('100');
     const userAddress = this.dapp.getUserAddress();
+    if (userAddress.toLowerCase() === (config.deployer).toLowerCase()) {
+      amountWei = this.dapp.eth2wei('1');
+    }
     const tx = await this.sc.mint(userAddress, { value: amountWei })
     return tx;
   }
@@ -102,7 +111,6 @@ module.exports = class NFT {
   }
 
   async cleanUp() {
-    console.log('NFT cleanup..');
   }
 
 }

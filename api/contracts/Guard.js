@@ -1,26 +1,19 @@
-const moment = require('moment');
 const ethers = require("ethers").ethers;
-const MAX_UINT = ethers.constants.MaxUint256;
-const config = require('./config.json');
+const config = require('./json/config.json');
 const SC_ABI = require('./json/GuardV3.sol/GuardV3.json').abi;
 const SC_ADDRESS = config.guard;
-const BigNumber = ethers.BigNumber;
 const ROUTER_ABI = require('./json/uniswapv2router02abi.json');
 
 module.exports = class Guard {
   constructor(dapp) {
-    console.log('Guard created..');
     this.dapp = dapp;
   }
 
   async init() {
-    console.log('Guard init..');
     const signer = this.dapp.getSigner();
     this.sc = new ethers.Contract(SC_ADDRESS, SC_ABI, signer);
     this.router = new ethers.Contract(config.router, ROUTER_ABI, signer);
     this.address = this.sc.address;
-    const version = await this.sc.VERSION();
-    console.log('Guard VERSION: ' + version);
   }
 
   async approve() {
@@ -29,8 +22,11 @@ module.exports = class Guard {
     if (needApprove) {
       const tx = await this.dapp.approve(coin, this.address);
       await tx.wait();
-      console.log(tx.hash);
     }
+  }
+
+  async getSwapPrice() {
+    return await this.swapToken2Coin('1.0');
   }
 
   async getData() {
@@ -58,8 +54,7 @@ module.exports = class Guard {
       ret = Object.assign({}, ret, obj);
     }
 
-    console.log('** guard data **');
-    console.log(ret);
+    ret.mayGuard = ret.action === 'pump' || ret.action === 'dump';
     return ret;
   }
 
@@ -74,20 +69,18 @@ module.exports = class Guard {
     let profitDump = false;
     let profitPump = false;
 
-    let i = 0;
-
     for (let i = 1; i < 20; i++) {
       try {
-        let newSample = eth2wei('' + (test * i));
+        let newSample = eth2wei('' + ((test * i) + 0.4));
         let profit = await guardsc.callStatic.buyBankSellSwap(newSample);
         if (!profitDump || profit.gt(profitDump)) {
           sample = wei2eth(newSample);
           profitDump = profit;
-          console.log('best-sample: ' + sample + ' profit: ' + wei2eth(profit));
+          // console.log('best-sample: ' + sample + ' profit: ' + wei2eth(profit));
         } else break;
       } catch (err) {
-        console.error(err.message);
-        console.log('callStatic.buyBankSellSwap error!');
+        // console.error(err.message);
+        console.error('callStatic.buyBankSellSwap error!');
         break;
       }
     }
@@ -100,11 +93,11 @@ module.exports = class Guard {
           if (!profitPump || profit.gt(profitPump)) {
             sample = wei2eth(newSample);
             profitPump = profit;
-            console.log('best-sample: ' + sample + ' profit: ' + wei2eth(profit));
+            // console.log('best-sample: ' + sample + ' profit: ' + wei2eth(profit));
           } else break;
         } catch (err) {
-          console.error(err.message);
-          console.log('callStatic.buySwapSellBank error!');
+          // console.error(err.message);
+          console.error('callStatic.buySwapSellBank error!');
           break;
         }
       }
@@ -158,7 +151,6 @@ module.exports = class Guard {
   }
 
   async cleanUp() {
-    console.log('Guard cleanup..');
   }
 
 }

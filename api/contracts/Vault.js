@@ -1,26 +1,59 @@
 const moment = require('moment');
 const ethers = require("ethers").ethers;
 
-const config = require('./config.json');
+const config = require('./json/config.json');
 const SC_ABI = require('./json/VaultV3.sol/VaultV3.json').abi;
 const SC_ADDRESS = config.vault;
-const BigNumber = ethers.BigNumber;
 
 module.exports = class Vault {
   constructor(dapp) {
-    console.log('Vault created..');
     this.dapp = dapp;
   }
 
   async init() {
-    console.log('Vault init..');
     const signer = this.dapp.getSigner();
     this.sc = new ethers.Contract(SC_ADDRESS, SC_ABI, signer);
     this.address = this.sc.address;
-    const version = await this.sc.VERSION();
-    console.log('Vault VERSION: ' + version);
+  }
+
+  async getAPY() {
+    const wei2eth = this.dapp.wei2eth;
     const data = await this.sc.getData();
-    console.log('rewardHistory.length: ' + data[1].toString());
+    const num = data[1].toNumber();
+    if (!(num > 1)) return 0;
+    let totalRps = 0;
+    let maxTs = 0;
+    let minTs = 0;
+    let rows = [];
+    for (let i = (num - 1); i >= 0; i--) {
+      const sd = await this.sc.getSessionData(i);
+      const ts = sd[3].toNumber();
+      const rps = Number(wei2eth(sd[2]));
+      rows.unshift({ ts, rps });
+      if (ts < (moment().unix() - (7 * 24 * 3600))) break;
+    }
+
+    for (let i = 1; i < rows.length; i++) {
+      totalRps = totalRps + rows[i].rps;
+    }
+    minTs = rows[0].ts;
+    maxTs = rows[rows.length - 1].ts;
+
+    const delta = maxTs - minTs;
+    const oneYear = (365 * 24 * 3600);
+    const yearRps = (totalRps * oneYear) / delta;
+    const apy = yearRps * 100;
+
+    // const apyData = {
+    //   numRows: num,
+    //   minTs,
+    //   maxTs,
+    //   totalRps,
+    //   delta,
+    //   apy
+    // }
+
+    return apy;
   }
 
   async stakeToken(amount) {
@@ -66,11 +99,13 @@ module.exports = class Vault {
     const needApprove = await this.dapp.needApprove(this.dapp.TOKEN, this.address);
     ret.needApprove = needApprove;
 
+    const apy = await this.getAPY();
+    ret.apy = apy;
+
     return ret;
   }
 
   async cleanUp() {
-    console.log('Vault cleanup..');
   }
 
 }
