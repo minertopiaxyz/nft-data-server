@@ -215,7 +215,9 @@ module.exports = class Dapp {
 
     ret.tsjkt = (moment().utc().utcOffset("+07:00")).format();
 
+    console.log('GUARD.approve');
     await this.GUARD.approve();
+    console.log('GUARD.getData');
     const guardData = await this.GUARD.getData();
     const mayGuard = guardData.mayGuard;
     console.log(guardData);
@@ -226,6 +228,7 @@ module.exports = class Dapp {
       console.log(tx.hash);
       await tx.wait();
 
+      console.log('POOL.getData');
       const poolData = await this.POOL.getData();
 
       ret.txName = 'GUARD.run';
@@ -233,6 +236,7 @@ module.exports = class Dapp {
       ret.guardData = guardData;
       ret.poolData = poolData;
     } else {
+      console.log('POOL.getData');
       const poolData = await this.POOL.getData();
       const mayPump = poolData.mayPump;
       const mayUpdate = poolData.mayUpdate;

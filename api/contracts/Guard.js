@@ -18,10 +18,12 @@ module.exports = class Guard {
 
   async approve() {
     const coin = this.dapp.USDT.sc;
+    
     const needApprove = await this.dapp.needApprove(coin, this.address);
     if (needApprove) {
       const tx = await this.dapp.approve(coin, this.address);
       await tx.wait();
+    } else {
     }
   }
 
